@@ -1,57 +1,110 @@
 #include "tlv.h"
 
-
-#define MAX_LEN   1048
 #define HEAD_LEN   sizeof(messageHead)
 
 void Tlv::ParseConcrete(const char* data, int data_len) {
   int type = 0;
   int length = 0;
-  const char* buffer = data;
-  while (true) {
-	  if (data_len >= HEAD_LEN) {
-		  type = *((int*)buffer);
-		  length = *((int*)buffer + 1);
-		  if (length <= 0 || length > MAX_LEN) {
-			  printf("%s receive error packet! len %d\n", __func__, length);
-			  break;
-		  }
-		  printf("%s type %d len %d\n", __func__, type, length);
 
-		  if (length == data_len - HEAD_LEN) {
-			  auto msg = new_message(type, length, data);
-			  queue_.push(msg);
-			  break;
-		  }
-		  else if (length > data_len - (int)HEAD_LEN) { //body is not enough
-			  remain_data_.append(data, data_len);
-			  break;
-		  }
-		  else {
-			  auto msg = new_message(type, length, data);
-			  queue_.push(msg);
-			  buffer += length + HEAD_LEN;
-			  continue;
-		  }
-	  }
-	  else { //Not enough head information
-		  remain_data_.append(data, data_len);
-		  break;
-	  }
+  if (data_len >= HEAD_LEN) {
+    type = *((int*)data);
+    length = *((int*)data + 1);
+
+    if (length == data_len - HEAD_LEN) { 
+      auto msg = new_message(type, length, data);
+      queue_.push(msg);
+    }
+    else if (length > data_len - (int)HEAD_LEN) { //body is not enough
+      next_data_.append(data, data_len);
+      next_need_ = NEED_BODY;
+    }
+    else {  //body is enough
+      auto msg = new_message(type, length, data);
+      queue_.push(msg);
+      remain_data_.append(data + length + HEAD_LEN, 
+                          data_len - length - HEAD_LEN );
+    }
+  }
+  else { //Not enough head information
+    next_data_.append(data, data_len);
+    next_need_ = NEED_HEAD;
   }
 }
 
+void Tlv::ParseConcreteNext2(const char* data, int data_len) {
+  int type = *((int*)data);
+  int length = *((int*)data + 1);
+
+  if (length == data_len - HEAD_LEN) {
+    auto msg = new_message(type, length, data + HEAD_LEN);
+    queue_.push(msg);
+    next_data_.clear();
+    next_need_ = NEED_NONE;
+  } else if (length > data_len - HEAD_LEN) {
+    next_need_ = NEED_BODY;
+  } else {
+    auto msg = new_message(type, length, data + HEAD_LEN);
+    queue_.push(msg);
+    remain_data_.append(data + length + HEAD_LEN, 
+                        data_len - length - HEAD_LEN );
+    next_data_.clear();
+    next_need_ = NEED_NONE;
+  }   
+}
+
+void Tlv::ParseConcreteNext(const char* data, int data_len) {
+  if (next_need_ == NEED_HEAD && data_len < HEAD_LEN) 
+    next_need_ = NEED_HEAD;
+  else 
+    ParseConcreteNext2(data, data_len);
+}
+
+void Tlv::ParseConcreteRemain(const char* data, int data_len) {
+  int type = 0;
+  int length = 0;
+
+  if (data_len >= HEAD_LEN) {
+    type = *((int*)data);
+    length = *((int*)data + 1);
+
+    if (length == data_len - HEAD_LEN) { 
+      auto msg = new_message(type, length, data);
+      queue_.push(msg);
+      remain_data_.clear();
+    }
+    else if (length > data_len - (int)HEAD_LEN) { //body is not enough
+      next_data_.append(data, data_len);
+      next_need_ = NEED_BODY;
+      remain_data_.clear();
+    }
+    else {  //body is enough
+      auto msg = new_message(type, length, data);
+      queue_.push(msg);
+      remain_data_.erase(0, length + HEAD_LEN );
+    }
+  }
+  else { //Not enough head information
+    next_data_.append(data, data_len);
+    next_need_ = NEED_HEAD;
+  }
+}
 
 void Tlv::Parse(const char* data, int data_len) {
   if (!data || data_len > MAX_LEN || data_len <= 0) 
     return;
-
-	if (remain_data_.empty()) {
-		ParseConcrete(data, data_len);
-	} else { 
-		remain_data_.append(data, data_len);
-		ParseConcrete(remain_data_.c_str(), remain_data_.length());
-	}      
-  
+  int i = 1;
+  while(i || !remain_data_.empty()) {
+    i = 0;
+    if (!remain_data_.empty()) {
+      ParseConcreteRemain(remain_data_.c_str(), remain_data_.size());
+    } else {
+      if (next_need_ == NEED_NONE) {
+        ParseConcrete(data, data_len);
+      } else {
+        next_data_.append(data, data_len);
+        ParseConcreteNext(next_data_.c_str(), next_data_.size());
+      }
+    } 
+  }
 }
 
