@@ -1,5 +1,4 @@
 #include "tlv.h"
-
 #define HEAD_LEN   sizeof(messageHead)
 
 void Tlv::ParseConcrete(const char* data, int data_len) {
@@ -9,9 +8,13 @@ void Tlv::ParseConcrete(const char* data, int data_len) {
   if (data_len >= HEAD_LEN) {
     type = *((int*)data);
     length = *((int*)data + 1);
+    if (length < 0) {
+      printf("%s receive error packet! len %d\n", __func__, length);
+      return;
+    }
 
     if (length == data_len - HEAD_LEN) { 
-      auto msg = new_message(type, length, data);
+      auto msg = new_message(type, length, data + HEAD_LEN);
       queue_.push(msg);
     }
     else if (length > data_len - (int)HEAD_LEN) { //body is not enough
@@ -19,7 +22,7 @@ void Tlv::ParseConcrete(const char* data, int data_len) {
       next_need_ = NEED_BODY;
     }
     else {  //body is enough
-      auto msg = new_message(type, length, data);
+      auto msg = new_message(type, length, data + HEAD_LEN);
       queue_.push(msg);
       remain_data_.append(data + length + HEAD_LEN, 
                           data_len - length - HEAD_LEN );
@@ -35,12 +38,17 @@ void Tlv::ParseConcreteNext2(const char* data, int data_len) {
   int type = *((int*)data);
   int length = *((int*)data + 1);
 
+  if (length < 0) {
+	  printf("%s receive error packet! len %d\n", __func__, length);
+	  return;
+  }
+
   if (length == data_len - HEAD_LEN) {
     auto msg = new_message(type, length, data + HEAD_LEN);
     queue_.push(msg);
     next_data_.clear();
     next_need_ = NEED_NONE;
-  } else if (length > data_len - HEAD_LEN) {
+  } else if (length > data_len - (int)HEAD_LEN) {
     next_need_ = NEED_BODY;
   } else {
     auto msg = new_message(type, length, data + HEAD_LEN);
@@ -66,9 +74,13 @@ void Tlv::ParseConcreteRemain(const char* data, int data_len) {
   if (data_len >= HEAD_LEN) {
     type = *((int*)data);
     length = *((int*)data + 1);
+    if (length < 0) {
+      printf("%s receive error packet! len %d\n", __func__, length);
+      return;
+    }
 
     if (length == data_len - HEAD_LEN) { 
-      auto msg = new_message(type, length, data);
+      auto msg = new_message(type, length, data + HEAD_LEN);
       queue_.push(msg);
       remain_data_.clear();
     }
@@ -78,7 +90,7 @@ void Tlv::ParseConcreteRemain(const char* data, int data_len) {
       remain_data_.clear();
     }
     else {  //body is enough
-      auto msg = new_message(type, length, data);
+      auto msg = new_message(type, length, data + HEAD_LEN);
       queue_.push(msg);
       remain_data_.erase(0, length + HEAD_LEN );
     }
@@ -86,11 +98,12 @@ void Tlv::ParseConcreteRemain(const char* data, int data_len) {
   else { //Not enough head information
     next_data_.append(data, data_len);
     next_need_ = NEED_HEAD;
+    remain_data_.clear();
   }
 }
 
 void Tlv::Parse(const char* data, int data_len) {
-  if (!data || data_len > MAX_LEN || data_len <= 0) 
+  if (!data || data_len <= 0) 
     return;
   int i = 1;
   while(i || !remain_data_.empty()) {
@@ -107,4 +120,3 @@ void Tlv::Parse(const char* data, int data_len) {
     } 
   }
 }
-
